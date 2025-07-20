@@ -1,7 +1,9 @@
 'use strict';
 
-
 (function (EXPORTS) { //floExchangeAPI v1.2.1
+    // FIX: Safely define floGlobals to prevent ReferenceError in different environments (Node.js/Browser)
+    const floGlobals = (typeof globalThis.floGlobals !== 'undefined') ? globalThis.floGlobals : {};
+
     const exchangeAPI = EXPORTS;
 
     const DEFAULT = {
@@ -19,27 +21,27 @@
     function BuildKBucket(options = {}) {
         /**
          * `options`:
-         *   `distance`: Function
-         *     `function (firstId, secondId) { return distance }` An optional
-         *     `distance` function that gets two `id` Uint8Arrays
-         *     and return distance (as number) between them.
-         *   `arbiter`: Function (Default: vectorClock arbiter)
-         *     `function (incumbent, candidate) { return contact; }` An optional
-         *     `arbiter` function that givent two `contact` objects with the same `id`
-         *     returns the desired object to be used for updating the k-bucket. For
-         *     more details, see [arbiter function](#arbiter-function).
-         *   `localNodeId`: Uint8Array An optional Uint8Array representing the local node id.
-         *     If not provided, a local node id will be created via `randomBytes(20)`.
-         *     `metadata`: Object (Default: {}) Optional satellite data to include
-         *     with the k-bucket. `metadata` property is guaranteed not be altered by,
-         *     it is provided as an explicit container for users of k-bucket to store
-         *     implementation-specific data.
-         *   `numberOfNodesPerKBucket`: Integer (Default: 20) The number of nodes
-         *     that a k-bucket can contain before being full or split.
-         *     `numberOfNodesToPing`: Integer (Default: 3) The number of nodes to
-         *     ping when a bucket that should not be split becomes full. KBucket will
-         *     emit a `ping` event that contains `numberOfNodesToPing` nodes that have
-         *     not been contacted the longest.
+         * `distance`: Function
+         * `function (firstId, secondId) { return distance }` An optional
+         * `distance` function that gets two `id` Uint8Arrays
+         * and return distance (as number) between them.
+         * `arbiter`: Function (Default: vectorClock arbiter)
+         * `function (incumbent, candidate) { return contact; }` An optional
+         * `arbiter` function that givent two `contact` objects with the same `id`
+         * returns the desired object to be used for updating the k-bucket. For
+         * more details, see [arbiter function](#arbiter-function).
+         * `localNodeId`: Uint8Array An optional Uint8Array representing the local node id.
+         * If not provided, a local node id will be created via `randomBytes(20)`.
+         * `metadata`: Object (Default: {}) Optional satellite data to include
+         * with the k-bucket. `metadata` property is guaranteed not be altered by,
+         * it is provided as an explicit container for users of k-bucket to store
+         * implementation-specific data.
+         * `numberOfNodesPerKBucket`: Integer (Default: 20) The number of nodes
+         * that a k-bucket can contain before being full or split.
+         * `numberOfNodesToPing`: Integer (Default: 3) The number of nodes to
+         * ping when a bucket that should not be split becomes full. KBucket will
+         * emit a `ping` event that contains `numberOfNodesToPing` nodes that have
+         * not been contacted the longest.
          *
          * @param {Object=} options optional
          */
@@ -111,7 +113,7 @@
          * @param  {Uint8Array} firstId  Uint8Array containing first id.
          * @param  {Uint8Array} secondId Uint8Array containing second id.
          * @return {Number}              Integer The XOR distance between firstId
-         *                               and secondId.
+         * and secondId.
          */
         this.distance = function (firstId, secondId) {
             let distance = 0
@@ -175,7 +177,7 @@
          *
          * @param  {Uint8Array} id  Contact node id
          * @param  {Number=} n      Integer (Default: Infinity) The maximum number of
-         *                          closest contacts to return
+         * closest contacts to return
          * @return {Array}          Array Maximum of n closest contacts to the node id
          */
         this.closest = function (id, n = Infinity) {
@@ -228,7 +230,7 @@
          * @param  {Object} node     internal object that has 2 leafs: left and right
          * @param  {Uint8Array} id   Id to compare localNodeId with.
          * @param  {Number} bitIndex Integer (Default: 0) The bit index to which bit
-         *                           to check in the id Uint8Array.
+         * to check in the id Uint8Array.
          * @return {Object}          left leaf if id at bitIndex is 0, right leaf otherwise.
          */
         this._determineNode = function (node, id, bitIndex) {
@@ -295,7 +297,7 @@
          * @param  {Object} node    internal object that has 2 leafs: left and right
          * @param  {Uint8Array} id  Contact node id.
          * @return {Number}         Integer Index of contact with provided id if it
-         *                          exists, -1 otherwise.
+         * exists, -1 otherwise.
          */
         this._indexOf = function (node, id) {
             for (let i = 0; i < node.contacts.length; ++i) {
@@ -336,7 +338,7 @@
          *
          * @param  {Object} node     node for splitting
          * @param  {Number} bitIndex the bitIndex to which byte to check in the
-         *                           Uint8Array for navigating the binary tree
+         * Uint8Array for navigating the binary tree
          */
         this._split = function (node, bitIndex) {
             node.left = this.createNode()
@@ -388,8 +390,8 @@
          *
          * @param  {Object} node    internal object that has 2 leafs: left and right
          * @param  {Number} index   the index in the bucket where contact exists
-         *                          (index has already been computed in a previous
-         *                          calculation)
+         * (index has already been computed in a previous
+         * calculation)
          * @param  {Object} contact The contact object to update.
          */
         this._update = function (node, index, contact) {
@@ -469,6 +471,7 @@
     }
 
     var nodeList, nodeURL, nodeKBucket; //Container for (backup) node list
+    var fetch_api_pos = 0; // Tracks the current node position
 
     Object.defineProperties(exchangeAPI, {
         adminID: {
@@ -487,23 +490,33 @@
         }
     });
 
-    function fetch_api(api, options) {
-        return new Promise((resolve, reject) => {
-            let curPos = fetch_api.curPos || 0;
-            if (curPos >= nodeList.length)
-                return reject(ExchangeError(ExchangeError.NODES_OFFLINE_CODE, 'No Node online! Refresh the page or try again later', errorCode.NODES_OFFLINE));
-            let url = "https://" + nodeURL[nodeList[curPos]];
-            (options ? fetch(url + api, options) : fetch(url + api))
-                .then(result => resolve(result)).catch(error => {
-                    console.warn(nodeList[curPos], 'is offline');
-                    //try next node
-                    fetch_api.curPos = curPos + 1;
-                    fetch_api(api, options)
-                        .then(result => resolve(result))
-                        .catch(error => reject(error))
-                });
-        })
+    // FIX: Replaced recursive fetch_api with an iterative one
+    async function fetch_api(api, options) {
+        if (!nodeList || !nodeList.length) {
+            return Promise.reject(ExchangeError(ExchangeError.NODES_OFFLINE_CODE, 'Node list is empty', errorCode.NODES_OFFLINE));
+        }
+
+        for (let i = 0; i < nodeList.length; i++) {
+            // Cycle through nodes starting from the last successful position
+            let currentPos = (fetch_api_pos + i) % nodeList.length;
+            let node = nodeList[currentPos];
+            let url = "https://" + nodeURL[node];
+
+            try {
+                const response = await (options ? fetch(url + api, options) : fetch(url + api));
+                // If fetch is successful, update the position and return the result
+                fetch_api_pos = currentPos;
+                return response;
+            } catch (error) {
+                console.warn(node, 'is offline');
+                // If it's the last node in the list and it also fails, then reject.
+                if (i === nodeList.length - 1) {
+                    return Promise.reject(ExchangeError(ExchangeError.NODES_OFFLINE_CODE, 'No Node online! Refresh the page or try again later', errorCode.NODES_OFFLINE));
+                }
+            }
+        }
     }
+
 
     const errorCode = exchangeAPI.errorCode = {
         INCORRECT_SERVER: '000',
@@ -572,16 +585,16 @@
         return new Promise((resolve, reject) => {
             if (!response.ok)
                 response.text()
-                    .then(result => reject(ExchangeError(response.status, result)))
-                    .catch(error => reject(ExchangeError(response.status, error)));
+                .then(result => reject(ExchangeError(response.status, result)))
+                .catch(error => reject(ExchangeError(response.status, error)));
             else if (json_)
                 response.json()
-                    .then(result => resolve(result))
-                    .catch(error => reject(ExchangeError(ExchangeError.BAD_RESPONSE_CODE, error)));
+                .then(result => resolve(result))
+                .catch(error => reject(ExchangeError(ExchangeError.BAD_RESPONSE_CODE, error)));
             else
                 response.text()
-                    .then(result => resolve(result))
-                    .catch(error => reject(ExchangeError(ExchangeError.BAD_RESPONSE_CODE, error)));
+                .then(result => resolve(result))
+                .catch(error => reject(ExchangeError(ExchangeError.BAD_RESPONSE_CODE, error)));
         });
     }
 
@@ -977,7 +990,7 @@
 
     exchangeAPI.depositFLO = function (quantity, floID, sinkID, privKey, proxySecret = null) {
         return new Promise((resolve, reject) => {
-            if (typeof quantity !== "number" || quantity <= floGlobals.fee)
+            if (typeof quantity !== "number" || quantity <= (floGlobals.fee || 0))
                 return reject(ExchangeError(ExchangeError.BAD_REQUEST_CODE, `Invalid quantity (${quantity})`, errorCode.INVALID_NUMBER));
             else if (!floCrypto.verifyPrivKey(privKey, floID))
                 return reject(ExchangeError(ExchangeError.BAD_REQUEST_CODE, "Invalid Private Key", errorCode.INVALID_PRIVATE_KEY));
@@ -1278,6 +1291,9 @@
         return new Promise((resolve, reject) => {
             if (!floCrypto.verifyPrivKey(privKey, floID))
                 return reject(ExchangeError(ExchangeError.BAD_REQUEST_CODE, "Invalid Private Key", errorCode.INVALID_PRIVATE_KEY));
+            // FIX: Add check for currency
+            if (!floGlobals.currency)
+                return reject(ExchangeError(ExchangeError.BAD_REQUEST_CODE, "Currency is not defined in floGlobals", errorCode.MISSING_PARAMETER));
             floTokenAPI.sendToken(privKey, amount, sinkID, '(convert to BTC)', floGlobals.currency).then(txid => {
                 let request = {
                     floID: floID,
@@ -1357,6 +1373,9 @@
                 return reject(ExchangeError(ExchangeError.BAD_REQUEST_CODE, "Invalid Private Key", errorCode.INVALID_PRIVATE_KEY));
             if (floID !== DEFAULT.marketID)
                 return reject(ExchangeError(ExchangeError.BAD_REQUEST_CODE, "Access Denied", errorCode.ACCESS_DENIED));
+            // FIX: Add check for currency
+            if (!floGlobals.currency)
+                return reject(ExchangeError(ExchangeError.BAD_REQUEST_CODE, "Currency is not defined in floGlobals", errorCode.MISSING_PARAMETER));
             floTokenAPI.sendToken(privKey, amount, sinkID, '(add convert fund)', floGlobals.currency).then(txid => {
                 let request = {
                     floID: floID,
@@ -1723,7 +1742,8 @@
 
     function refreshDataFromBlockchain() {
         return new Promise((resolve, reject) => {
-            let nodes, trusted = new Set(), assets, tags, lastTx;
+            let nodes, trusted = new Set(),
+                assets, tags, lastTx;
             try {
                 nodes = JSON.parse(localStorage.getItem(_l('nodes')));
                 trusted = new Set((localStorage.getItem(_l('trusted')) || "").split(','));
@@ -1740,10 +1760,13 @@
                 tags = new Set();
             }
 
-            var query_options = { sentOnly: true, pattern: DEFAULT.marketApp };
-            if (typeof lastTx == 'string' && /^[0-9a-f]{64}/i.test(lastTx))//lastTx is txid of last tx
+            var query_options = {
+                sentOnly: true,
+                pattern: DEFAULT.marketApp
+            };
+            if (typeof lastTx == 'string' && /^[0-9a-f]{64}/i.test(lastTx)) //lastTx is txid of last tx
                 query_options.after = lastTx;
-            else if (!isNaN(lastTx))//lastTx is tx count (*backward support)
+            else if (!isNaN(lastTx)) //lastTx is tx count (*backward support)
                 query_options.ignoreOld = parseInt(lastTx);
             floBlockchainAPI.readData(DEFAULT.marketID, query_options).then(result => {
                 result.data.reverse().forEach(data => {
